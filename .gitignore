@@ -136,3 +136,6 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+
+#Let's keep our secrets secret
+/secret/
