@@ -76,7 +76,7 @@ func oneFichierDownload(link string) File{
 	if err != nil {
 		// handle err
 	}
-	defer resp.Body.Close()
+	// defer resp.Body.Close()
 
 	filename := strings.Split(strings.Join(resp.Header["Content-Disposition"], " "), "\"")[1]
 	filesize, err := strconv.ParseInt(strings.Join(resp.Header["Content-Length"], " "), 10, 64)
