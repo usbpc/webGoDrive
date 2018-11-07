@@ -91,14 +91,14 @@ func main() {
 		log.Fatalf("Unable to retrieve Drive client: %v", err)
 	}
 
-	res, _ := http.Get("https://speed.hetzner.de/100MB.bin")
+	res, _ := http.Get("https://the-eye.eu/public/rclone_guide.pdf")
 
 	defer res.Body.Close()
 
 	file := &File{
 		r: res.Body,
 		f: &drive.File{
-			Name: "100MB.bin",
+			Name: "rclone_guide.pdf",
 		},
 		size: res.ContentLength,
 		buf: make([]byte, 256 * 1024 * 4),
@@ -178,6 +178,7 @@ func (f *File) uploadChunk(urls string, client *http.Client) (int64, error) {
 		return 0, err
 	}
 
+	//TODO do proper parsing, 308 means everything is fine send more data 5XX means I need retry, 201 or 200 means upload done.
 	defer googleapi.CloseBody(res)
 	err = googleapi.CheckResponse(res)
 	if res.StatusCode != 308 && err != nil {
@@ -253,16 +254,6 @@ type MyReader struct {
 	buf []byte
 	pos int
 }
-
-/* func (r *MyReader) Seek(offset int64, whence int) (int64, error) {
-	switch whence {
-	case io.SeekStart: {}
-	case io.SeekCurrent: {}
-	case io.SeekEnd: {}
-	}
-
-	return 0, nil
-} */
 
 func (r *MyReader) Read(p []byte) (n int, err error) {
 	n = copy(p, r.buf[r.pos:])
