@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 	"io"
 	"io/ioutil"
@@ -10,10 +12,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
 )
 
@@ -87,17 +90,27 @@ func main() {
 		log.Fatalf("Unable to retrieve Drive client: %v", err)
 	}
 
-	ChunckedUpload(&File{
-		r: nil,
+	res, _ := http.Get("https://speed.hetzner.de/100MB.bin")
+
+	defer res.Body.Close()
+
+	file := &File{
+		r: res.Body,
 		f: &drive.File{
-			Name: "Test",
+			Name: "100MB.bin",
 		},
-		size: int64(10),
-	}, srv, client)
+		size: res.ContentLength,
+		buf: make([]byte, 256 * 1024 * 4),
+	}
+
+	_, err = file.ChunkedUpload(srv, client)
+	if err != nil {
+		log.Fatalf("Got error: %v", err)
+	}
 }
 
 
-func initUpload(f *File, client *http.Client) (string, error) {
+func (f *File) initUpload(client *http.Client) (string, error) {
 	//URL query parameters
 	query := url.Values{
 		"uploadType": {"resumable"},
@@ -141,41 +154,92 @@ func initUpload(f *File, client *http.Client) (string, error) {
 	return res.Header.Get("Location"), nil
 }
 
-func ChunckedUpload(f *File, srv *drive.Service, client *http.Client) (string, error)  {
+func (f *File) uploadChunk(urls string, client *http.Client) (int64, error) {
+	reader := &MyReader{
+		buf: f.buf,
+	}
+	req, err := http.NewRequest("PUT", urls, reader)
+	if err != nil {
+		return 0, err
+	}
 
+	sending := fmt.Sprintf("%v-%v/%v", f.pos, f.pos+int64(len(f.buf)-1), f.size)
 
-	url, err := initUpload(f, client)
+	fmt.Printf("Sending %s\n", sending)
+	req.Header.Set("Content-Range", sending)
+
+	fmt.Println("Before request!")
+	res, err := client.Do(req)
+	fmt.Println("After request")
+	if err != nil {
+		return 0, err
+	}
+
+	defer googleapi.CloseBody(res)
+	err = googleapi.CheckResponse(res)
+	if err != nil {
+		return 0, err
+	}
+
+	r, _ := regexp.Compile("bytes \\d+-(\\d+)/\\d+")
+	groups := r.FindStringSubmatch(res.Header.Get("Range"))
+	if len(groups) < 2 {
+		return 0, errors.New("response didn't include range header properly")
+	}
+
+	ret, err := strconv.ParseInt(groups[1], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return ret , nil
+}
+
+func (f *File) fillBuf() (bool, error){
+	pos := 0
+	for pos < len(f.buf){
+		off, err := f.r.Read(f.buf[pos:])
+		if err == io.EOF {
+			//TODO check later...
+			f.buf = f.buf[:pos+off]
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		pos += off
+	}
+	return true, nil
+}
+
+func (f *File) ChunkedUpload(srv *drive.Service, client *http.Client) (string, error)  {
+	fmt.Printf("Timeout: %v\n", client.Timeout)
+	urls, err := f.initUpload(client)
 	if err != nil {
 		return "", err
 	}
 
-	fmt.Printf("I got an upload url: %s", url)
+	fmt.Printf("I got an upload url: %s\n", urls)
 
-	/**
-	reader := &MyReader{
-		r: f.r,
-		buf: make([]byte, 256 * 1024), //Currently just using min size according to: https://developers.google.com/drive/api/v3/resumable-upload
+	for {
+		more, err := f.fillBuf()
+		if err != nil {
+			return "", err
+		}
+		fmt.Println("Before upload Chunk")
+		read, err := f.uploadChunk(urls, client)
+		if err != nil {
+			return "", err
+		}
+		println("After upload Chunk")
+		if read != f.pos + int64(len(f.buf)-1) {
+			return "", errors.New(fmt.Sprintf("wrong return size, expected %v got %v", f.pos + int64(len(f.buf)), read))
+		}
+		f.pos = read + 1
+		if !more {
+			break
+		}
 	}
-
-	send := int64(0)
-
-	for send < f.size {
-		req, err := http.NewRequest("PUT", urls, reader)
-		if err != nil {
-			log.Fatalf("Well that didn't go as expected: %v", err)
-		}
-		req.Header.Set("Content-Range", fmt.Sprintf("%v-%v/%v", send, f.size-send, f.size))
-		res, err := client.Do(req)
-		if err != nil {
-			log.Fatalf("Request didn't go as expected: %v", err)
-		}
-		err = googleapi.CheckResponse(res)
-
-		if err != nil {
-			log.Fatalf("Why you hate me google? %v", err)
-		}
-
-	}**/
 
 	return "", nil
 }
@@ -186,7 +250,7 @@ type MyReader struct {
 	pos int
 }
 
-func (r *MyReader) Seek(offset int64, whence int) (int64, error) {
+/* func (r *MyReader) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
 	case io.SeekStart: {}
 	case io.SeekCurrent: {}
@@ -194,7 +258,7 @@ func (r *MyReader) Seek(offset int64, whence int) (int64, error) {
 	}
 
 	return 0, nil
-}
+} */
 
 func (r *MyReader) Read(p []byte) (n int, err error) {
 	n = copy(p, r.buf[r.pos:])
@@ -206,6 +270,8 @@ type File struct {
 	r io.Reader
 	f *drive.File
 	size int64
+	pos int64
+	buf []byte
 }
 
 type Host interface {
