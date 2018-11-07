@@ -14,6 +14,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"time"
 
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
@@ -103,6 +104,8 @@ func main() {
 		buf: make([]byte, 256 * 1024 * 4),
 	}
 
+	client.Timeout = time.Duration(30 * time.Second)
+
 	_, err = file.ChunkedUpload(srv, client)
 	if err != nil {
 		log.Fatalf("Got error: %v", err)
@@ -163,7 +166,7 @@ func (f *File) uploadChunk(urls string, client *http.Client) (int64, error) {
 		return 0, err
 	}
 
-	sending := fmt.Sprintf("%v-%v/%v", f.pos, f.pos+int64(len(f.buf)-1), f.size)
+	sending := fmt.Sprintf("bytes %v-%v/%v", f.pos, f.pos+int64(len(f.buf)-1), f.size)
 
 	fmt.Printf("Sending %s\n", sending)
 	req.Header.Set("Content-Range", sending)
@@ -177,14 +180,15 @@ func (f *File) uploadChunk(urls string, client *http.Client) (int64, error) {
 
 	defer googleapi.CloseBody(res)
 	err = googleapi.CheckResponse(res)
-	if err != nil {
+	if res.StatusCode != 308 && err != nil {
 		return 0, err
 	}
 
-	r, _ := regexp.Compile("bytes \\d+-(\\d+)/\\d+")
-	groups := r.FindStringSubmatch(res.Header.Get("Range"))
+	r, _ := regexp.Compile("bytes=\\d+-(\\d+)")
+	resRange := res.Header.Get("Range")
+	groups := r.FindStringSubmatch(resRange)
 	if len(groups) < 2 {
-		return 0, errors.New("response didn't include range header properly")
+		return 0, errors.New(fmt.Sprintf("response didn't include range header properly, heder is: %v", resRange))
 	}
 
 	ret, err := strconv.ParseInt(groups[1], 10, 64)
@@ -231,7 +235,7 @@ func (f *File) ChunkedUpload(srv *drive.Service, client *http.Client) (string, e
 		if err != nil {
 			return "", err
 		}
-		println("After upload Chunk")
+		fmt.Println("After upload Chunk")
 		if read != f.pos + int64(len(f.buf)-1) {
 			return "", errors.New(fmt.Sprintf("wrong return size, expected %v got %v", f.pos + int64(len(f.buf)), read))
 		}
@@ -263,6 +267,9 @@ type MyReader struct {
 func (r *MyReader) Read(p []byte) (n int, err error) {
 	n = copy(p, r.buf[r.pos:])
 	r.pos += n
+	if r.pos == len(r.buf) {
+		return n, io.EOF
+	}
 	return n, nil
 }
 
