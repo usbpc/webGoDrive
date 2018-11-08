@@ -4,16 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/usbpc/webGoDrive/gdrive"
+	"golang.org/x/net/context"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/drive/v3"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"time"
-
-	"golang.org/x/net/context"
-	"golang.org/x/oauth2"
-	"google.golang.org/api/drive/v3"
 )
 
 // Retrieve a token, saves the token, then returns the generated client.
@@ -90,18 +88,13 @@ func main() {
 
 	defer res.Body.Close()
 
-	file := gdrive.NewFile(res.Body, &drive.File{Name: "100MB.bin"}, res.ContentLength)
+	g := gdrive.Create(client, srv)
 
-	client.Timeout = time.Duration(30 * time.Second)
-
-	_, err = file.ChunkedUpload(srv, client)
-	if err != nil {
-		log.Fatalf("Got error: %v", err)
-	}
+	g.Upload(res.Body, &drive.File{Name: "100MB.bin"}, res.ContentLength)
 }
 
 /*type Host interface {
 	Login(usr string, pwd string) bool
-	File(url string, pwd string) File
+	ResumableUpload(url string, pwd string) ResumableUpload
 	Folder(url string) (urls []string)
 }*/
