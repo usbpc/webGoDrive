@@ -160,6 +160,7 @@ func (f *File) fillBuf() (bool, error) {
 	return true, nil
 }
 
+//TODO deal with upload interrupted, so 5XX errors, also ratelimitng?
 func (f *File) ChunkedUpload(srv *drive.Service, client *http.Client) (string, error) {
 	fmt.Printf("Timeout: %v\n", client.Timeout)
 	urls, err := f.initUpload(client)
